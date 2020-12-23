@@ -7,12 +7,20 @@
 
 #include <vulkan/vulkan.h>
 #include<vector>
-#include <stdexcept>
 #include <iostream>
+#include <stdexcept>
+#include <cstdlib>
+#include <vector>
+#include <optional>
+#include <set>
+#include <fstream>
 
-
+#include <list>
+#include "VertexBuffers.h"
+const int MAX_FRAMES_IN_FLIGHT = 2;
 
 class VulkanHelper {
+
 protected:
     static GLFWwindow* window;
 
@@ -39,6 +47,8 @@ protected:
         std::vector<VkPresentModeKHR> presentModes;
     };
 
+
+    virtual ~VulkanHelper(){};
 
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device,VkSurfaceKHR surface) {
         SwapChainSupportDetails details;
@@ -120,10 +130,12 @@ protected:
     }
 
 public:
-    static void setWindow(GLFWwindow* Window) 
-    {
+    static void setWindow(GLFWwindow* Window) {
         window = Window;
     }
+
+ 
+   
 };
 GLFWwindow* VulkanHelper::window;
 
@@ -194,6 +206,10 @@ private:
     }
 public:
   
+    static std::unique_ptr<VulkanInstance> make() {
+        return std::make_unique<VulkanInstance>();
+    }
+
     VulkanInstance() {
         if (enableValidationLayers && !checkValidationLayerSupport()) {
             throw std::runtime_error("validation layer not available");
@@ -232,9 +248,6 @@ public:
 
 
         checkExtensions(requiredExtensions, availableExtensions);
-
-        //VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-
         if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
             throw std::runtime_error("failed to create instance!");
         }
@@ -249,8 +262,7 @@ public:
     VulkanInstance(const VulkanInstance&) = delete;
     VulkanInstance& operator=(const VulkanInstance&) = delete;
 
-    VkInstance& getInstance()
-    {
+    VkInstance& getInstance() {
         return instance;
     }
 };
@@ -290,9 +302,11 @@ private:
     }
 
 public:
-    
-    VulkanDebugMessenger(VkInstance& Instance) : instance(Instance)
-    {
+    static std::unique_ptr<VulkanDebugMessenger> make(VkInstance& instance) {
+        return std::make_unique<VulkanDebugMessenger>(instance);
+    }
+
+    VulkanDebugMessenger(VkInstance& Instance) : instance(Instance) {
         VkDebugUtilsMessengerCreateInfoEXT createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
         createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
@@ -320,6 +334,10 @@ private:
     VkSurfaceKHR surface;
     VkInstance& instance;
 public:
+
+    static std::unique_ptr<VulkanSurface> make(VkInstance& instance) {
+        return std::make_unique<VulkanSurface>(instance);
+    }
 
     VulkanSurface(VkInstance& Instance) : instance(Instance) {
         if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
@@ -415,6 +433,9 @@ private:
     }
 
 public:
+    static std::unique_ptr<VulkanLogicalDevice> make(VkInstance& instance, VkSurfaceKHR& surface) {
+        return std::make_unique<VulkanLogicalDevice>(instance,surface);
+    }
 
     VulkanLogicalDevice(VkInstance& Instance, VkSurfaceKHR& Surface) : instance(Instance), surface(Surface) {
         pickPhysicalDevice();
@@ -458,6 +479,7 @@ public:
             throw std::runtime_error("failed to create logical device!");
         }
 
+
         vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
         vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 
@@ -471,18 +493,15 @@ public:
         vkDestroyDevice(device, nullptr);
     }
     
-    VkDevice& getDevice()
-    {
+    VkDevice& getDevice() {
         return device;
     }
 
-    VkPhysicalDevice& getPhysicalDevice()
-    {
+    VkPhysicalDevice& getPhysicalDevice() {
         return physicalDevice;
     }
 
-    VkQueue& getGraphicsQueue()
-    {
+    VkQueue& getGraphicsQueue() {
         return graphicsQueue;
     }
 
@@ -512,6 +531,8 @@ private:
 
     std::vector<VkFramebuffer> swapChainFramebuffers;
     std::vector<VkCommandBuffer> commandBuffers;
+
+    std::shared_ptr<VertexBuffer> vertexBuffer;
 
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
         for (const auto& availableFormat : availableFormats) {
@@ -647,7 +668,11 @@ private:
     }
 
 public:
-    VulkanSwapChain() = delete;
+
+
+    static std::unique_ptr<VulkanSwapChain>make(VkDevice& device, VkSurfaceKHR& surface, VkPhysicalDevice& pDevice, VkCommandPool& commandPool) {
+        return  std::make_unique<VulkanSwapChain>(device, surface, pDevice, commandPool);
+    }
 
     VulkanSwapChain(VkDevice& Device,VkSurfaceKHR& Surface, VkPhysicalDevice& PDevice, VkCommandPool& CommandPool) : device(Device), physicalDevice(PDevice), surface(Surface), commandPool(CommandPool) {
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice,surface);
@@ -729,10 +754,13 @@ public:
 
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -892,6 +920,8 @@ public:
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
+        vertexBuffer = std::make_unique<VertexBuffer>(device, physicalDevice);
+
         for (size_t i = 0; i < commandBuffers.size(); i++) {
             VkCommandBufferBeginInfo beginInfo{};
             beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -915,26 +945,34 @@ public:
             renderPassInfo.pClearValues = &clearColor;
 
 
+       
 
+       
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+                vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        
+                VkBuffer vertexBuffers[] = { vertexBuffer->getVertexBuffer() };
+                VkDeviceSize offsets[] = { 0 };
+                vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+                vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
             vkCmdEndRenderPass(commandBuffers[i]);
-
+         
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to record command buffer!");
             }
+   
+ 
+       
         }
     }
 
     VulkanSwapChain() = delete;
     VulkanSwapChain(const VulkanSwapChain&) = delete;
     VulkanSwapChain& operator=(const VulkanSwapChain&) = delete;
-    ~VulkanSwapChain()
-    {
+    ~VulkanSwapChain() {
         std::cout << "destroying swap chain\n" << std::flush;
         for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
             vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
@@ -954,24 +992,20 @@ public:
 
     }
 
-    VkSwapchainKHR& getSwapChain()
-    {
+    VkSwapchainKHR& getSwapChain() {
         return swapChain;
     }
  
 
-    VkFormat getSwapChainFormat()
-    {
+    VkFormat getSwapChainFormat() {
         return swapChainImageFormat;
     }
    
-    VkExtent2D getSwapChainExtent()
-    {
+    VkExtent2D getSwapChainExtent() {
         return swapChainExtent;
     }
 
-    std::vector<VkImage>& getSwapChainImages()
-    {
+    std::vector<VkImage>& getSwapChainImages() {
         return swapChainImages;
     }
 
@@ -987,7 +1021,10 @@ private:
     VkCommandPool commandPool;
     VkDevice& device;
 public:
-    VulkanCommandPool(VkDevice& Device, VkPhysicalDevice& physicalDevice, VkSurfaceKHR& surface) : device(Device) {
+    static std::unique_ptr<VulkanCommandPool> make(VkDevice& device, VkSurfaceKHR& surface, VkPhysicalDevice& physicalDevice) {
+        return std::make_unique<VulkanCommandPool>(device,surface, physicalDevice);
+    }
+    VulkanCommandPool(VkDevice& Device, VkSurfaceKHR& surface, VkPhysicalDevice& physicalDevice) : device(Device) {
         QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice,surface);
 
         VkCommandPoolCreateInfo poolInfo{};
@@ -997,6 +1034,8 @@ public:
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
         }
+
+
     }
 
     VulkanCommandPool() = delete;
@@ -1021,6 +1060,10 @@ private:
     std::vector<VkFence> inFlightFences;
     std::vector<VkFence> imagesInFlight;
 public:
+    static std::unique_ptr<VulkanSyncObjects> make(VkDevice& device, std::vector<VkImage>& swapChainImages) {
+        return std::make_unique<VulkanSyncObjects>(device, swapChainImages);
+    }
+
     VulkanSyncObjects(VkDevice& Device, std::vector<VkImage>& swapChainImages) : device(Device){
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);

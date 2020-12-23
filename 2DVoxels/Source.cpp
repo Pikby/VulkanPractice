@@ -1,3 +1,6 @@
+#include "VulkanHelpers.h"
+#include "VulkanWindow.h"
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -19,18 +22,21 @@
 #include <set>
 #include <fstream>
 
+#include <list>
 
 
-const int MAX_FRAMES_IN_FLIGHT = 2;
 
-#include "VulkanHelpers.h"
+
+
 
 
 
 class HelloTriangleApplication {
 public:
     void run() {
-        initWindow();
+        initGLFW();
+
+
         initVulkan();
         mainLoop();
         cleanup();
@@ -47,49 +53,42 @@ private:
     std::unique_ptr<VulkanCommandPool> vulkanCommandPool;
     std::unique_ptr<VulkanSwapChain> vulkanSwapChain;
 
-    GLFWwindow* window;
-   
+
+    std::unique_ptr<VulkanWindow> vulkanWindow;
+
+
+
     size_t currentFrame = 0;
-
-
-    bool framebufferResized = false;
-
-    static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
-        auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
-        app->framebufferResized = true;
-    }
-
-    void initWindow()
-    {
-        glfwInit();
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-
-        window = glfwCreateWindow(800, 600, "Vulkan Testing", nullptr, nullptr);
-        glfwSetWindowUserPointer(window, this);
-        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
-
-    }
-
     void initVulkan() {
+        vulkanInstance = VulkanInstance::make();
+        VkInstance& instance = vulkanInstance->getInstance();
 
-        VulkanHelper::setWindow(window);
-
-           
-        vulkanInstance          = std::make_unique<VulkanInstance>();
-        vulkanDebugMessenger    = std::make_unique<VulkanDebugMessenger>(vulkanInstance->getInstance());
-        vulkanSurface           = std::make_unique<VulkanSurface>(vulkanInstance->getInstance());
-        vulkanLogicalDevice     = std::make_unique<VulkanLogicalDevice>(vulkanInstance->getInstance(), vulkanSurface->getSurface());
-        vulkanCommandPool       = std::make_unique<VulkanCommandPool>(vulkanLogicalDevice->getDevice(), vulkanLogicalDevice->getPhysicalDevice(),vulkanSurface->getSurface());
-        vulkanSwapChain         = std::make_unique<VulkanSwapChain>(vulkanLogicalDevice->getDevice(), vulkanSurface->getSurface(), vulkanLogicalDevice->getPhysicalDevice(), vulkanCommandPool->getCommandPool());
-        vulkanSyncObjects       = std::make_unique<VulkanSyncObjects>(vulkanLogicalDevice->getDevice(), vulkanSwapChain->getSwapChainImages());
+        vulkanDebugMessenger = VulkanDebugMessenger::make(instance);
         
-    
+        vulkanSurface = VulkanSurface::make(instance);
+        VkSurfaceKHR& surface = vulkanSurface->getSurface();
+
+        vulkanLogicalDevice = VulkanLogicalDevice::make(instance, surface);
+        VkDevice& device = vulkanLogicalDevice->getDevice();
+        VkPhysicalDevice& pDevice = vulkanLogicalDevice->getPhysicalDevice();
+        vulkanCommandPool = VulkanCommandPool::make(device, surface, pDevice);
+
+        std::cout << "1\n";
+        vulkanSwapChain = VulkanSwapChain::make(device, surface, pDevice, vulkanCommandPool->getCommandPool());
+        vulkanSyncObjects = VulkanSyncObjects::make(device, vulkanSwapChain->getSwapChainImages());
+        std::cout << "2\n";
+   
     } 
+
+    void initGLFW() {
+        glfwInit();
+        vulkanWindow = VulkanWindow::makeWindow(800, 600, "Vulkan Testing");
+        VulkanHelper::setWindow(vulkanWindow->getWindow());
+    }
 
     void mainLoop() {
 
-        while (!glfwWindowShouldClose(window)) {
+        while (!glfwWindowShouldClose(vulkanWindow->getWindow())) {
             glfwPollEvents();
             drawFrame();
         }
@@ -160,8 +159,8 @@ private:
 
         result = vkQueuePresentKHR(vulkanLogicalDevice->getPresentQueue(), &presentInfo);
 
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
-            framebufferResized = false;
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || vulkanWindow->getFramebufferResized()) {
+            vulkanWindow->setFramebufferResized(false);
             recreateSwapChain();
         }
         else if (result != VK_SUCCESS) {
@@ -175,21 +174,23 @@ private:
 
     void recreateSwapChain() {
         vkDeviceWaitIdle(vulkanLogicalDevice->getDevice());
-        vulkanSwapChain = nullptr;
+        vulkanSwapChain.reset();
         vulkanSwapChain = std::make_unique<VulkanSwapChain>(vulkanLogicalDevice->getDevice(), vulkanSurface->getSurface(), vulkanLogicalDevice->getPhysicalDevice(), vulkanCommandPool->getCommandPool());
-
     }
 
 
 
     void cleanup() {
-        vulkanSyncObjects = nullptr;
-        vulkanSwapChain = nullptr;
-        vulkanCommandPool = nullptr;
-        vulkanLogicalDevice = nullptr;
-        vulkanSurface = nullptr;
-        vulkanDebugMessenger = nullptr;
-        vulkanInstance = nullptr;
+        vulkanSyncObjects.reset();
+        vulkanSwapChain.reset();
+        vulkanCommandPool.reset();
+        vulkanLogicalDevice.reset();
+        vulkanSurface.reset();
+        vulkanDebugMessenger.reset();
+        vulkanInstance.reset();
+
+
+        glfwTerminate();
     }
 
     
