@@ -6,6 +6,12 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
 #include <glm/vec4.hpp>
 #include <glm/mat4x4.hpp>
 
@@ -73,10 +79,8 @@ private:
         VkPhysicalDevice& pDevice = vulkanLogicalDevice->getPhysicalDevice();
         vulkanCommandPool = VulkanCommandPool::make(device, surface, pDevice);
 
-        std::cout << "1\n";
-        vulkanSwapChain = VulkanSwapChain::make(device, surface, pDevice, vulkanCommandPool->getCommandPool());
+        vulkanSwapChain = VulkanSwapChain::make(device, surface, pDevice, vulkanCommandPool->getCommandPool(),vulkanLogicalDevice->getGraphicsQueue());
         vulkanSyncObjects = VulkanSyncObjects::make(device, vulkanSwapChain->getSwapChainImages());
-        std::cout << "2\n";
    
     } 
 
@@ -94,6 +98,30 @@ private:
         }
 
         vkDeviceWaitIdle(vulkanLogicalDevice->getDevice());
+    }
+
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{};
+
+        auto& swapChainExtent = (vulkanSwapChain->getSwapChainExtent());
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1;
+
+
+        auto& device = vulkanLogicalDevice->getDevice();
+        void* data;
+
+        auto& uniformBuffersMemory = vulkanSwapChain->getUniformBuffersMemory();
+        vkMapMemory(device, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+            memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(device, uniformBuffersMemory[currentImage]);
     }
 
     void drawFrame() {
@@ -121,6 +149,8 @@ private:
             vkWaitForFences(device, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
         }
         imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+        updateUniformBuffer(imageIndex);
 
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -167,7 +197,6 @@ private:
             throw std::runtime_error("failed to present swap chain image!");
         }
 
-
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
     }
@@ -175,7 +204,7 @@ private:
     void recreateSwapChain() {
         vkDeviceWaitIdle(vulkanLogicalDevice->getDevice());
         vulkanSwapChain.reset();
-        vulkanSwapChain = std::make_unique<VulkanSwapChain>(vulkanLogicalDevice->getDevice(), vulkanSurface->getSurface(), vulkanLogicalDevice->getPhysicalDevice(), vulkanCommandPool->getCommandPool());
+        vulkanSwapChain = VulkanSwapChain::make(vulkanLogicalDevice->getDevice(), vulkanSurface->getSurface(), vulkanLogicalDevice->getPhysicalDevice(), vulkanCommandPool->getCommandPool(),vulkanLogicalDevice->getGraphicsQueue());
     }
 
 

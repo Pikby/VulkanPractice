@@ -270,6 +270,7 @@ public:
 class VulkanDebugMessenger : VulkanHelper {
 private:
     VkInstance& instance;
+
     VkDebugUtilsMessengerEXT debugMessenger;
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -331,8 +332,9 @@ public:
 
 class VulkanSurface : public VulkanHelper {
 private:
-    VkSurfaceKHR surface;
     VkInstance& instance;
+
+    VkSurfaceKHR surface;
 public:
 
     static std::unique_ptr<VulkanSurface> make(VkInstance& instance) {
@@ -526,6 +528,8 @@ private:
 
     VkRenderPass renderPass;
 
+
+    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
@@ -667,14 +671,37 @@ private:
         return shaderModule;
     }
 
+    void createDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    }
+
 public:
 
 
-    static std::unique_ptr<VulkanSwapChain>make(VkDevice& device, VkSurfaceKHR& surface, VkPhysicalDevice& pDevice, VkCommandPool& commandPool) {
-        return  std::make_unique<VulkanSwapChain>(device, surface, pDevice, commandPool);
+    static std::unique_ptr<VulkanSwapChain>make(VkDevice& device, VkSurfaceKHR& surface, VkPhysicalDevice& pDevice, VkCommandPool& commandPool, VkQueue& graphicalQueue) {
+        return std::make_unique<VulkanSwapChain>(device, surface, pDevice, commandPool,graphicalQueue);
     }
 
-    VulkanSwapChain(VkDevice& Device,VkSurfaceKHR& Surface, VkPhysicalDevice& PDevice, VkCommandPool& CommandPool) : device(Device), physicalDevice(PDevice), surface(Surface), commandPool(CommandPool) {
+    VulkanSwapChain(VkDevice& Device,VkSurfaceKHR& Surface, VkPhysicalDevice& PDevice, VkCommandPool& CommandPool, VkQueue& graphicalQueue) : device(Device), physicalDevice(PDevice), surface(Surface), commandPool(CommandPool) {
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice,surface);
 
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
@@ -685,6 +712,8 @@ public:
         if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
             imageCount = swapChainSupport.capabilities.maxImageCount;
         }
+
+        
 
         VkSwapchainCreateInfoKHR createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -736,6 +765,8 @@ public:
 
         VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        createDescriptorSetLayout();
 
         VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
         vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -920,7 +951,7 @@ public:
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
-        vertexBuffer = std::make_unique<VertexBuffer>(device, physicalDevice);
+        vertexBuffer = std::make_unique<VertexBuffer>(device, physicalDevice,commandPool,graphicalQueue,swapChainImages.size());
 
         for (size_t i = 0; i < commandBuffers.size(); i++) {
             VkCommandBufferBeginInfo beginInfo{};
@@ -956,7 +987,9 @@ public:
                 VkDeviceSize offsets[] = { 0 };
                 vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
 
-                vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+                vkCmdBindIndexBuffer(commandBuffers[i], vertexBuffer->getIndexBuffer(), 0, VK_INDEX_TYPE_UINT16);
+
+                vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(vertexBuffer->getIndicesSize()), 1, 0, 0, 0);
 
             vkCmdEndRenderPass(commandBuffers[i]);
          
@@ -990,6 +1023,7 @@ public:
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
 
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     }
 
     VkSwapchainKHR& getSwapChain() {
@@ -997,11 +1031,11 @@ public:
     }
  
 
-    VkFormat getSwapChainFormat() {
+    VkFormat& getSwapChainFormat() {
         return swapChainImageFormat;
     }
    
-    VkExtent2D getSwapChainExtent() {
+    VkExtent2D& getSwapChainExtent() {
         return swapChainExtent;
     }
 
@@ -1011,6 +1045,10 @@ public:
 
     std::vector<VkCommandBuffer>& getCommandBuffers() {
         return commandBuffers;
+    }
+
+    auto& getUniformBuffersMemory() {
+        return vertexBuffer->getUniformBuffersMemory();
     }
    
 };
@@ -1099,19 +1137,19 @@ public:
         }
     }
 
-    auto& getInFlightFences(){
+    std::vector<VkFence>& getInFlightFences(){
         return inFlightFences;
     }
 
-    auto& getImagesInFlight() {
+    std::vector<VkFence>& getImagesInFlight() {
         return imagesInFlight;
     }
 
-    auto& getImageAvailableSemaphores() {
+    std::vector<VkSemaphore>& getImageAvailableSemaphores() {
         return imageAvailableSemaphores;
     }
 
-    auto& getRenderFinishedSemaphores() {
+    std::vector<VkSemaphore>& getRenderFinishedSemaphores() {
         return renderFinishedSemaphores;
     }
 };
